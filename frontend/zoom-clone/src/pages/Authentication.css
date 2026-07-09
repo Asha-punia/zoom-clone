@@ -1,0 +1,14 @@
+.authenticationContainer {
+    width: 26vw;
+    margin-inline: 37vw;
+}
+
+/* .authenticationContainer  > div:nth-child(2) {
+    height: 100vh;
+    width: 40vw;
+    padding-inline: 10rem;
+    padding-block: 5rem;
+    border: 20px solid rgb(26, 26, 85);
+    border-radius: 18px;
+    box-shadow: 50px;
+} */

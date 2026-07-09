@@ -1,0 +1,57 @@
+.landingPageContainer {
+    width: 100vw;
+    height: 100vh;
+    background: url("/background.png");
+    background-repeat: no-repeat;
+    background-size: cover;
+}
+
+.landingPageContainer nav {
+    color: white;
+    padding-inline: 12px;
+    padding-block: 15px;
+    font-size: 22px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.landingPageContainer nav .navList {
+    display: flex;
+    gap: 15px;
+    font-size: 15px;
+    cursor: pointer;
+}
+
+.landingMainContainer {
+    color: white;
+    display: flex;
+    justify-content: space-between;
+    padding-inline: 15px;
+    height: 80vh;
+    align-items: center;
+    margin-inline: 5rem;
+}
+.mobileImg {
+    height: 70vh;
+    width: 50vw;
+    background: url("/mobile.png");
+    background-repeat: no-repeat;
+}
+.landingMainContainer > div:nth-child(1) {
+    font-size: 2rem;
+}
+.landingMainContainer > div:nth-child(1) p {
+    font-size: 20px;
+}
+.landingMainContainer button {
+    padding-inline: 12px;
+    padding-block: 8px;
+    background-color: orange;
+    color: white;
+    font-size: 20px;
+    margin-top: 10px;
+    border: none;
+    border-radius: 10px;
+    
+}
