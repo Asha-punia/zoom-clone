@@ -13,6 +13,9 @@ export default function VideoMeet() {
     let [username, setUsername] = useState("");
     let [videoAvailable, setVideoAvailable] = useState(true);
     let [audioAvailable, setAudioAvailable] = useState(true);
+    let [isMuted, setIsMuted] = useState(false);
+    let [isCameraOn, setIsCameraOn] = useState(true);
+    let [inCall, setInCall] = useState(false);
     let [screenAvailable, setScreenAvaiable] = useState();
     let [video, setVideo] = useState([]);
     let [audio, setAudio] = useState();
@@ -23,20 +26,11 @@ export default function VideoMeet() {
     const getPermissions = async () => {
         try {
             const pc = pcRef.current;
-            //Video
-            const videoPermission = await navigator.mediaDevices.getUserMedia({video : true});
-            if(videoPermission) {
-                setVideoAvailable(true);
-            }else {
-                setVideoAvailable(false);
-            } 
-            //Audio
-            const audioPermission = await navigator.mediaDevices.getUserMedia({audio : true});
-            if(audioPermission) {
-                setAudioAvailable(true);
-            }else {
-                setAudioAvailable(false);
-            }
+            //Video and Audio
+            const userMediaStream = await navigator.mediaDevices.getUserMedia({video : true, audio : true});
+            setVideoAvailable(true);
+            setAudioAvailable(true);
+         
             //Screen Sharing
             if(navigator.mediaDevices.getDisplayMedia) {
                 setScreenAvaiable(true);
@@ -44,22 +38,21 @@ export default function VideoMeet() {
                 setScreenAvaiable(false);
             }
             //stream
-            if(videoAvailable || audioAvailable) {
-                const userMediaStream = await navigator.mediaDevices.getUserMedia({video : videoAvailable, audio : audioAvailable});
-                if(userMediaStream) {
-                    window.localStream = userMediaStream;
-                    localVideoRef.current.srcObject = userMediaStream;
-                    userMediaStream.getTracks().forEach((track) => {
-                        pc.addTrack(track, userMediaStream);
-                    });
-                }
-            }
+            window.localStream = userMediaStream;
+            localVideoRef.current.srcObject = userMediaStream;
+
+            userMediaStream.getTracks().forEach((track) => {
+                pc.addTrack(track, userMediaStream);
+            });
+
         }catch(err) {
+            setVideoAvailable(false);
+            setAudioAvailable(false);            
             console.log("Streaming Failed!", err);
         }
     }
 
-    useEffect(() => {
+    const createPeerConnection = () => {
         pcRef.current = new RTCPeerConnection({
             iceServers : [
                 { urls : "stun:stun.l.google.com:19302" }
@@ -71,12 +64,18 @@ export default function VideoMeet() {
             if(remoteVideoRef.current) {
                 remoteVideoRef.current.srcObject = remoteMediaStream;
             }
-        }
-    }, []);
+        }  
+        //send ice-candidate
 
-    useEffect(() => {
-        getPermissions();
-    }, []);
+            pcRef.current.onicecandidate = (event) => {
+                if(event.candidate) {
+                    socket.emit("ice-candidate", event.candidate);
+                    console.log("Sending ice candidate", event.candidate);
+                }
+            }
+          
+    }
+
 
     //Socket connected
     useEffect(() => {
@@ -101,7 +100,14 @@ export default function VideoMeet() {
                 alert("Enter valid Room-Id!");
                 return;
             }
-            socket.emit("room-id", roomId);
+            if(socket.connected) {
+                socket.emit("room-id", roomId);
+            }else {
+                socket.connect();
+                socket.once("connect", () => {
+                    socket.emit("room-id", roomId);
+                });
+            }
         }catch(e) {
             console.log("error occured!", e);
         }
@@ -109,18 +115,52 @@ export default function VideoMeet() {
 
     const createOffer = async () => {
         try {
+            createPeerConnection();
             const pc = pcRef.current;
+            await getPermissions();
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             socket.emit("offer", offer);
+            setInCall(true);
         }catch(e) {
             console.log("Error while creating offfer", e);
         }
     }
+    //mute/unmute
+    const toggleMute = () => {
+        const audioTrack = window.localStream.getAudioTracks()[0];
+        audioTrack.enabled = !(audioTrack.enabled);
+        setIsMuted(!audioTrack.enabled);
+    }
+    //camera on/off
+    const toggleCameraState = () => {
+        const videoTrack = window.localStream.getVideoTracks()[0];
+        videoTrack.enabled = !videoTrack.enabled;
+        setIsCameraOn(videoTrack.enabled);
+    }
+    //leave meeting
+    const leaveMeeting = () => {
+        window.localStream.getTracks().forEach((track) => {
+            track.stop();
+        });
+        localVideoRef.current.srcObject = null;
 
+        if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = null;
+        }
+
+        window.localStream = null;
+
+        pcRef.current.close();
+        socket.disconnect();
+        setInCall(false);
+    }
     useEffect(() => {
-        const pc = pcRef.current;
         const handleAnswer = async (answer) => {
+            const pc = pcRef.current;
+            if(!pc) {
+                return;
+            }
             if (pc.signalingState !== "have-local-offer") {
                 return;
             }
@@ -132,70 +172,77 @@ export default function VideoMeet() {
         return () => {
             socket.off("answer", handleAnswer);
         };
-    }, [])
-
-    useEffect(() => {
-        const pc = pcRef.current;
-        const handleOffer = async (offer) => {
-            // await getPermissions();
-            await pc.setRemoteDescription(
-                new RTCSessionDescription(offer)
-            );
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            socket.emit("answer", answer);
-        }
-        socket.on("offer", handleOffer);
-        return () => {
-            socket.off("offer", handleOffer);
-        }
     }, []);
 
-    //ice-candidate
-
     useEffect(() => {
-        const pc = pcRef.current;
-
-        //send ice-candidate
-
-        pc.onicecandidate = (event) => {
-            if(event.candidate) {
-                socket.emit("ice-candidate", event.candidate);
-                console.log("Sending ice candidate", event.candidate);
+            const handleOffer = async (offer) => {
+                const pc = pcRef.current;
+                if(!pc) {
+                    return;
+                }
+                // await getPermissions();
+                await pc.setRemoteDescription(
+                    new RTCSessionDescription(offer)
+                );
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                socket.emit("answer", answer);
             }
-        }
-        
-        //receive ice-candidate
+            socket.on("offer", handleOffer);
+            return () => {
+                socket.off("offer", handleOffer);
+            }
+    }, []);        
 
-        const handleCandidate = async (candidate) => {
-           try {
+        //ice-candidate
+
+        useEffect(() => {
+            //receive ice-candidate
+
+            const handleCandidate = async (candidate) => {
+            try {
+                const pc = pcRef.current;
+                if(!pc) {
+                    return;
+                }
                 await pc.addIceCandidate(candidate);
                 console.log("ice-candidate added!", candidate);
-           }catch (err) {
+            }catch (err) {
                 console.log("Error adding ice candidate", err);
-           }
-        }
+            }
+            }
 
-        socket.on("ice-candidate", handleCandidate);
+            socket.on("ice-candidate", handleCandidate);
 
-        //cleanup
+            //cleanup
 
-        return () => {
-            socket.off("ice-candidate", handleCandidate);
-        }
+            return () => {
+                socket.off("ice-candidate", handleCandidate);
+            }
 
-    }, []);
+        }, []);        
 
 
 
     return (
         <>
-            <h2> LOBBY </h2>
-            <TextField id="username" label="Username" variant="outlined" value={username} onChange={(e) => setUsername(e.target.value)} /><br/><br />
-            <TextField id="roomId" label="Room-Id" variant="outlined" value={roomId} onChange={(e) => setRoomId(e.target.value)} /><br/><br />
-            <Button variant="contained" onClick={joinRoom}>Join-Room</Button>
-            <Button variant="contained" style={{ marginLeft: "10px" }} onClick={createOffer}>Connect</Button>
-
+            
+            {inCall ? (
+                <>
+                    <Button variant="contained" onClick={toggleMute} >{isMuted ? "Unmute" : "Mute"}</Button>
+                    <Button variant="contained" style={{marginLeft: "10px"}} onClick={toggleCameraState}>{isCameraOn ? "Turn Camera Off" : "Turn Camera On"}</Button>
+                    <Button variant="contained" style={{marginLeft:"10px"}} onClick={leaveMeeting}>Leave</Button>
+                </>
+            ) :
+            (
+                <>
+                    <h2> LOBBY </h2>
+                    <TextField id="username" label="Username" variant="outlined" value={username} onChange={(e) => setUsername(e.target.value)} /><br/><br />
+                    <TextField id="roomId" label="Room-Id" variant="outlined" value={roomId} onChange={(e) => setRoomId(e.target.value)} /><br/><br />
+                    <Button variant="contained" onClick={joinRoom}>Join-Room</Button>
+                    <Button variant="contained" style={{ marginLeft: "10px" }} onClick={createOffer}>Connect</Button>
+                </>
+            )}
             <div>
                 <div>
                     <video ref={localVideoRef} autoPlay muted></video>

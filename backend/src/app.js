@@ -1,5 +1,6 @@
+import dotenv from "dotenv";
 if(process.env.NODE_ENV != "production") {
-    require('dotenv').config();
+    dotenv.config();
 }
 import express from "express";
 import {createServer} from "node:http";
