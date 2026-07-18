@@ -45,6 +45,8 @@ export default function VideoMeet() {
                 pc.addTrack(track, userMediaStream);
             });
 
+            console.log(pcRef.current.getSenders().find((sender) => sender.track.kind === "video"));
+
         }catch(err) {
             setVideoAvailable(false);
             setAudioAvailable(false);            
@@ -155,6 +157,29 @@ export default function VideoMeet() {
         socket.disconnect();
         setInCall(false);
     }
+    //Screen Sharing
+    const shareScreen = async () => {
+        try {
+            //A sender is a pipeline. The track is the source flowing through that pipeline. replaceTrack() changes the source, not the pipeline.
+            const screenStream = await navigator.mediaDevices.getDisplayMedia({video : true});
+            localVideoRef.current.srcObject = screenStream;
+            const screenTrack = screenStream.getVideoTracks()[0];
+            const videoSender = pcRef.current.getSenders().find((sender) => sender.track.kind === "video");
+            console.log(videoSender.track.label);
+            await videoSender.replaceTrack(screenTrack);
+            console.log(videoSender.track.label);
+            screenTrack.onended = async () => {
+                const screenSender = pcRef.current.getSenders().find((sender) => sender.track.kind === "video");
+                const videoTrack = window.localStream.getVideoTracks()[0];
+                console.log(videoSender.track.label);
+                await screenSender.replaceTrack(videoTrack);
+                console.log(videoSender.track.label);
+                localVideoRef.current.srcObject = window.localStream;
+            }
+        }catch(e) {
+            console.log("screen sharing failed!", e);
+        }
+    }
     useEffect(() => {
         const handleAnswer = async (answer) => {
             const pc = pcRef.current;
@@ -232,6 +257,7 @@ export default function VideoMeet() {
                     <Button variant="contained" onClick={toggleMute} >{isMuted ? "Unmute" : "Mute"}</Button>
                     <Button variant="contained" style={{marginLeft: "10px"}} onClick={toggleCameraState}>{isCameraOn ? "Turn Camera Off" : "Turn Camera On"}</Button>
                     <Button variant="contained" style={{marginLeft:"10px"}} onClick={leaveMeeting}>Leave</Button>
+                    <Button variant="contained" style={{marginLeft: "10px"}} onClick={shareScreen}>Screen Share</Button>
                 </>
             ) :
             (
