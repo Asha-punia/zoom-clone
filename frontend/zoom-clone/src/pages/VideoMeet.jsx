@@ -8,6 +8,7 @@ const socket = io("http://localhost:8000");
 
 export default function VideoMeet() {
     const pcRef = useRef(null);
+    const pendingCandidateRef = useRef([]);
     let localVideoRef = useRef(null);
     let remoteVideoRef = useRef(null);
     let [username, setUsername] = useState("");
@@ -21,6 +22,8 @@ export default function VideoMeet() {
     let [audio, setAudio] = useState();
     let [screen, setScreen] = useState();
     let [roomId, setRoomId] = useState("");
+    let [message, setMessage] = useState("");
+    let [messages, setMessages] = useState([]);
 
 
     const getPermissions = async () => {
@@ -45,8 +48,6 @@ export default function VideoMeet() {
                 pc.addTrack(track, userMediaStream);
             });
 
-            console.log(pcRef.current.getSenders().find((sender) => sender.track.kind === "video"));
-
         }catch(err) {
             setVideoAvailable(false);
             setAudioAvailable(false);            
@@ -61,7 +62,6 @@ export default function VideoMeet() {
             ]
         });
         pcRef.current.ontrack = (event) => {
-            console.log("TRACK RECEIVED!", event);
             const remoteMediaStream = event.streams[0];
             if(remoteVideoRef.current) {
                 remoteVideoRef.current.srcObject = remoteMediaStream;
@@ -69,15 +69,13 @@ export default function VideoMeet() {
         }  
         //send ice-candidate
 
-            pcRef.current.onicecandidate = (event) => {
-                if(event.candidate) {
-                    socket.emit("ice-candidate", event.candidate);
-                    console.log("Sending ice candidate", event.candidate);
-                }
+        pcRef.current.onicecandidate = (event) => {
+            if(event.candidate) {
+                socket.emit("ice-candidate", event.candidate);
             }
+        }
           
     }
-
 
     //Socket connected
     useEffect(() => {
@@ -165,21 +163,34 @@ export default function VideoMeet() {
             localVideoRef.current.srcObject = screenStream;
             const screenTrack = screenStream.getVideoTracks()[0];
             const videoSender = pcRef.current.getSenders().find((sender) => sender.track.kind === "video");
-            console.log(videoSender.track.label);
             await videoSender.replaceTrack(screenTrack);
-            console.log(videoSender.track.label);
             screenTrack.onended = async () => {
                 const screenSender = pcRef.current.getSenders().find((sender) => sender.track.kind === "video");
                 const videoTrack = window.localStream.getVideoTracks()[0];
-                console.log(videoSender.track.label);
                 await screenSender.replaceTrack(videoTrack);
-                console.log(videoSender.track.label);
                 localVideoRef.current.srcObject = window.localStream;
             }
         }catch(e) {
             console.log("screen sharing failed!", e);
         }
     }
+    //Chat Section
+    const sendMessage = () => {
+        socket.emit("chat-message", {
+            username,
+            message,
+        });
+    }
+    useEffect(() => {
+        const handleMessage = (data) => {
+            setMessages((prevData) => [...prevData, data]);
+        }
+        socket.on("chat-message", handleMessage);
+        return () => {
+            socket.off("chat-message", handleMessage);
+        }
+    }, []);
+
     useEffect(() => {
         const handleAnswer = async (answer) => {
             const pc = pcRef.current;
@@ -192,6 +203,11 @@ export default function VideoMeet() {
             await pc.setRemoteDescription(
                 new RTCSessionDescription(answer)
             );
+            while(pendingCandidateRef.current.length > 0) {
+                const candidate = pendingCandidateRef.current.shift();
+                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            }
+
         }
         socket.on("answer", handleAnswer);
         return () => {
@@ -201,17 +217,22 @@ export default function VideoMeet() {
 
     useEffect(() => {
             const handleOffer = async (offer) => {
-                const pc = pcRef.current;
-                if(!pc) {
-                    return;
+                if(!pcRef.current) {
+                    createPeerConnection();
+                    await getPermissions();
                 }
-                // await getPermissions();
+                const pc = pcRef.current;
                 await pc.setRemoteDescription(
                     new RTCSessionDescription(offer)
                 );
+                while(pendingCandidateRef.current.length > 0) {
+                    const candidate = pendingCandidateRef.current.shift();
+                    await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                }
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
                 socket.emit("answer", answer);
+                setInCall(true);
             }
             socket.on("offer", handleOffer);
             return () => {
@@ -230,8 +251,11 @@ export default function VideoMeet() {
                 if(!pc) {
                     return;
                 }
-                await pc.addIceCandidate(candidate);
-                console.log("ice-candidate added!", candidate);
+                if(!pc.remoteDescription) {
+                    pendingCandidateRef.current.push(candidate);
+                    return;
+                }
+                await pc.addIceCandidate(new RTCIceCandidate(candidate));
             }catch (err) {
                 console.log("Error adding ice candidate", err);
             }
@@ -258,6 +282,9 @@ export default function VideoMeet() {
                     <Button variant="contained" style={{marginLeft: "10px"}} onClick={toggleCameraState}>{isCameraOn ? "Turn Camera Off" : "Turn Camera On"}</Button>
                     <Button variant="contained" style={{marginLeft:"10px"}} onClick={leaveMeeting}>Leave</Button>
                     <Button variant="contained" style={{marginLeft: "10px"}} onClick={shareScreen}>Screen Share</Button>
+                    <TextField id="chat" label="chat" variant="outlined" value={message} onChange={(e) => setMessage(e.target.value)}></TextField>
+                    <Button variant="contained" style={{marginLeft:"10px"}} onClick={sendMessage}>Send</Button>
+
                 </>
             ) :
             (
@@ -269,6 +296,13 @@ export default function VideoMeet() {
                     <Button variant="contained" style={{ marginLeft: "10px" }} onClick={createOffer}>Connect</Button>
                 </>
             )}
+            <div>
+                {messages.map((msg) => {
+                    return (
+                    <div><b>{msg.username}</b> : {msg.message}</div>
+                    );
+                })}
+            </div>
             <div>
                 <div>
                     <video ref={localVideoRef} autoPlay muted></video>
